@@ -40,7 +40,7 @@ const run = async (): Promise<void> => {
     // Only match comments with single line word chars
     // Including "." and "-" for hypenated names and honorifics
     // Name must start with a word char
-    if (!commentBody.match(/^\w[.\w\- ]+$/i)) {
+    if (!commentBody.match(/[\S ]+$/i)) {
       throw new Error(
         "Comment does not appear to be a name. Only names with valid characters on a single line are accepted."
       );
