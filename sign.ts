@@ -1,34 +1,40 @@
-import * as core from '@actions/core'
-import * as github from '@actions/github'
-import * as fs from 'fs'
-import * as path from 'path'
-import {GitCreateTreeParamsTree} from '@octokit/rest'
+import * as core from "@actions/core";
+import * as github from "@actions/github";
+import * as fs from "fs";
+import * as path from "path";
+import { GitCreateTreeParamsTree } from "@octokit/rest";
 
 interface TreeEntry {
-  path?: string
+  path?: string;
 }
 
 const run = async (): Promise<void> => {
   try {
-    const token = process.env['COMMITTER_TOKEN'] || process.env['GITHUB_TOKEN']
-    if (!token) return
+    const token = process.env["COMMITTER_TOKEN"] || process.env["GITHUB_TOKEN"];
+    if (!token) return;
 
     // Create the octokit client
-    const octokit: github.GitHub = new github.GitHub(token)
-    const nwo = process.env['GITHUB_REPOSITORY'] || '/'
-    const [owner, repo] = nwo.split('/')
-    const issue = github.context.payload['issue']
-    if (!issue) return
+    const octokit: github.GitHub = new github.GitHub(token);
+    const nwo = process.env["GITHUB_REPOSITORY"] || "/";
+    const [owner, repo] = nwo.split("/");
+    const issue = github.context.payload["issue"];
+    if (!issue) return;
 
-    const comment = github.context.payload.comment
-    const commentBody = comment.body.trim()
-    const commentAuthor = comment.user.login
+    const comment = github.context.payload.comment;
+    const commentBody = comment.body.trim();
+    const commentAuthor = comment.user.login;
 
     // Is this limited to an issue number?
-    const expectedIssueNumber = core.getInput('issue-number')
-    if (expectedIssueNumber && expectedIssueNumber !== '' && expectedIssueNumber !== `${issue.number}`) {
-      console.warn(`Comment for unexpected issue number ${issue.number}, not signing`)
-      return
+    const expectedIssueNumber = core.getInput("issue-number");
+    if (
+      expectedIssueNumber &&
+      expectedIssueNumber !== "" &&
+      expectedIssueNumber !== `${issue.number}`
+    ) {
+      console.warn(
+        `Comment for unexpected issue number ${issue.number}, not signing`
+      );
+      return;
     }
 
     // Only match comments with single line word chars
@@ -36,89 +42,95 @@ const run = async (): Promise<void> => {
     // Name must start with a word char
     if (!commentBody.match(/^\w[.\w\- ]+$/i)) {
       throw new Error(
-        'Comment does not appear to be a name. Only names with valid characters on a single line are accepted.',
-      )
+        "Comment does not appear to be a name. Only names with valid characters on a single line are accepted."
+      );
     }
-    console.log(`Signing ${commentBody} for ${commentAuthor}!`)
+    console.log(`Signing ${commentBody} for ${commentAuthor}!`);
 
     // Grab the ref for a branch (master in this case)
     // If you already know the sha then you don't need to do this
     // https://developer.github.com/v3/git/refs/#get-a-reference
-    const ref = 'heads/master'
+    const ref = "heads/master";
     const refResponse = await octokit.git.getRef({
       owner,
       repo,
-      ref,
-    })
-    const sha = refResponse.data.object.sha
-    console.log({sha})
+      ref
+    });
+    const sha = refResponse.data.object.sha;
+    console.log({ sha });
 
     // Grab the current tree so we can see the list of paths
     // https://developer.github.com/v3/git/trees/#get-a-tree-recursively
     const baseTreeResponse = await octokit.git.getTree({
       owner,
       repo,
-      tree_sha: sha,
-    })
-    const paths: Array<string> = baseTreeResponse.data.tree.map((item: TreeEntry) => {
-      return item.path
-    })
-    console.log({paths})
+      tree_sha: sha
+    });
+    const paths: Array<string> = baseTreeResponse.data.tree.map(
+      (item: TreeEntry) => {
+        return item.path;
+      }
+    );
+    console.log({ paths });
 
     // Keep track of the entries for this commit
-    const tree: Array<GitCreateTreeParamsTree> = []
+    const tree: Array<GitCreateTreeParamsTree> = [];
 
     // Grab the file we are adding the signature to
-    const workspace = process.env['GITHUB_WORKSPACE'] || './'
-    const fileToSign = core.getInput('file-to-sign')
-    const fileToSignPath = path.join(workspace, fileToSign)
+    const workspace = process.env["GITHUB_WORKSPACE"] || "./";
+    const fileToSign = core.getInput("file-to-sign");
+    const fileToSignPath = path.join(workspace, fileToSign);
 
-    let content = fs.readFileSync(fileToSignPath).toString('utf-8')
-    let [letter, signatures] = content.split('<!-- signatures -->')
+    let content = fs.readFileSync(fileToSignPath).toString("utf-8");
+    let [letter, signatures] = content.split("<!-- signatures -->");
     if (!signatures) {
-      throw new Error('No <!-- signatures --> marker found. Please add a signatures marker to your document')
+      throw new Error(
+        "No <!-- signatures --> marker found. Please add a signatures marker to your document"
+      );
     }
 
     // Is the signature already there?
-    const re = new RegExp(`^\\* .* @${commentAuthor}$`, 'gm')
+    const re = new RegExp(`^\\* .* @${commentAuthor}$`, "gm");
     if (signatures.match(re)) {
-      throw new Error(`We're confused, there is already a signature for ${commentAuthor}`)
+      throw new Error(
+        `We're confused, there is already a signature for ${commentAuthor}`
+      );
     }
 
     // Make sure there is a newline
-    signatures = signatures.trim()
-    if (signatures !== '' && !signatures.endsWith('\n')) signatures += '\n'
+    signatures = signatures.trim();
+    if (signatures !== "" && !signatures.endsWith("\n")) signatures += "\n";
 
     // Put together the content with the signatures added
-    const signature = `${commentBody}, @${commentAuthor}`
-    signatures += `* ${signature}\n`
+    const signature = `${commentBody}, @${commentAuthor}`;
+    signatures += `* ${signature}\n`;
 
     // Sort the lines alphabetically by handle
-    if (core.getInput('alphabetize') === 'yes') {
-      console.log('Alphabetizing the signatures by user name')
-      const signatureLines = signatures.trim().split('\n')
+    if (core.getInput("alphabetize") === "yes") {
+      console.log("Alphabetizing the signatures by user name");
+      const signatureLines = signatures.trim().split("\n");
       signatureLines.sort((a: string, b: string) => {
-        const handleA = a.match(/@.+$/)
-        const handleB = b.match(/@.+$/)
-        if (!handleA) return -1
-        if (!handleB) return 1
-        return handleA == handleB ? 0 : handleA < handleB ? -1 : 1
-      })
-      signatures = signatureLines.join('\n')
-      signatures += `\n`
+        const handleA = a.match(/@.+$/);
+        const handleB = b.match(/@.+$/);
+        if (!handleA) return -1;
+        if (!handleB) return 1;
+        return handleA == handleB ? 0 : handleA < handleB ? -1 : 1;
+      });
+      signatures = signatureLines.join("\n");
+      signatures += `\n`;
     }
 
     // Join the pieces
-    letter = `${letter}<!-- signatures -->\n`
-    content = `${letter}${signatures}`
+    letter = `${letter}<!-- signatures -->\n`;
+    content = `${letter}${signatures}`;
 
     // Push the contents
     tree.push({
       path: fileToSign,
-      mode: '100644',
-      type: 'blob',
-      content: content,
-    })
+      mode: "100644",
+      type: "blob",
+      content: content
+    });
 
     // Create the tree using the collected tree entries
     // https://developer.github.com/v3/git/trees/#create-a-tree
@@ -126,21 +138,21 @@ const run = async (): Promise<void> => {
       owner,
       repo,
       base_tree: sha,
-      tree: tree,
-    })
-    console.log({treeResponse: treeResponse.data})
+      tree: tree
+    });
+    console.log({ treeResponse: treeResponse.data });
 
     // Commit that tree
     // https://developer.github.com/v3/git/commits/#create-a-commit
-    const message = `Add @${commentAuthor}`
+    const message = `Add @${commentAuthor}`;
     const commitResponse = await octokit.git.createCommit({
       owner,
       repo,
       message,
       tree: treeResponse.data.sha,
-      parents: [sha],
-    })
-    console.log(`Commit complete: ${commitResponse.data.sha}`)
+      parents: [sha]
+    });
+    console.log(`Commit complete: ${commitResponse.data.sha}`);
 
     // The commit is complete but it is unreachable
     // We have to update master to point to it
@@ -148,20 +160,20 @@ const run = async (): Promise<void> => {
     const updateRefResponse = await octokit.git.updateRef({
       owner,
       repo,
-      ref: 'heads/master',
+      ref: "heads/master",
       sha: commitResponse.data.sha,
-      force: false,
-    })
-    console.log({updateRefResponse: updateRefResponse.data})
-    console.log('Done')
+      force: false
+    });
+    console.log({ updateRefResponse: updateRefResponse.data });
+    console.log("Done");
 
     // TODO: add a reaction to the comment
   } catch (error) {
-    console.error(error.message)
-    core.setFailed(`${error}`)
+    console.error(error.message);
+    core.setFailed(`${error}`);
   }
-}
+};
 
-run()
+run();
 
-export default run
+export default run;
